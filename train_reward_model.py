@@ -19,8 +19,8 @@ DEFAULTS = {
     "data": "preferences.jsonl",
     "output": "./reward_model",
     "epochs": 3,
-    "batch_size": 4,
-    "grad_accum": 4,
+    "batch_size": 64,
+    "grad_accum": 1,
     "lr": 1e-4,
     "max_length": 512,
     "eval_split": 0.1,
@@ -56,7 +56,6 @@ def get_device_config():
     if torch.cuda.is_available():
         bf16 = torch.cuda.is_bf16_supported()
         return (torch.bfloat16 if bf16 else torch.float16), bf16, not bf16
-    # MPS (Apple Silicon) and CPU: use fp32 for stability
     return torch.float32, False, False
 
 
@@ -117,6 +116,8 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
+        dataloader_num_workers=4,
+        torch_compile=True,
     )
 
     trainer = RewardTrainer(
