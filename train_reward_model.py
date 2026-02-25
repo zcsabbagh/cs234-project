@@ -85,7 +85,7 @@ def main():
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model,
         num_labels=1,
-        torch_dtype=dtype,
+        dtype=dtype,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 
@@ -105,13 +105,14 @@ def main():
         logging_steps=10,
         bf16=use_bf16,
         fp16=use_fp16,
-        warmup_ratio=0.1,
+        warmup_steps=10,
         weight_decay=0.01,
         remove_unused_columns=False,
         report_to="none",
         seed=42,
         load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
     )
 
     trainer = RewardTrainer(
