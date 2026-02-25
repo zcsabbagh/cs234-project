@@ -21,7 +21,7 @@ DEFAULTS = {
     "epochs": 3,
     "batch_size": 4,
     "grad_accum": 4,
-    "lr": 1e-5,
+    "lr": 1e-4,
     "max_length": 512,
     "eval_split": 0.1,
 }
