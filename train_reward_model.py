@@ -117,7 +117,7 @@ def main():
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         dataloader_num_workers=4,
-        torch_compile=True,
+        torch_compile=False, # can enable later for larger runs
     )
 
     trainer = RewardTrainer(
