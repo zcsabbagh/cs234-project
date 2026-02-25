@@ -1,7 +1,7 @@
 """
 Train a Bradley-Terry reward model on pairwise preference data using TRL.
 
-Base model: Qwen/Qwen2.5-0.5B-Instruct
+Base model: Qwen/Qwen2.5-1.5B-Instruct
 Data: preferences.jsonl (from generate_preferences.py)
 Loss: -log(sigma(r(x, y_w) - r(x, y_l)))
 """
@@ -15,7 +15,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from trl import RewardConfig, RewardTrainer
 
 DEFAULTS = {
-    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
     "data": "preferences.jsonl",
     "output": "./reward_model",
     "epochs": 3,
