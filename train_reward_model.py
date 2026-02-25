@@ -33,9 +33,13 @@ def load_preferences(path: str) -> Dataset:
     with open(path) as f:
         for line in f:
             row = json.loads(line)
+            winner = row.get("winner")
+            loser = row.get("loser")
+            if winner is None or loser is None:
+                continue  # Skip rows where judge couldn't determine winner/loser
             instruction = row["instruction"]
-            winner_text = row[row["winner"]]
-            loser_text = row[row["loser"]]
+            winner_text = row[winner]
+            loser_text = row[loser]
             chosen.append([
                 {"role": "user", "content": instruction},
                 {"role": "assistant", "content": winner_text},
