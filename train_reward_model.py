@@ -24,8 +24,8 @@ DEFAULTS = {
     "lr": 5e-5,
     "max_length": 1024,
     "eval_split": 0.15,
-    "classifier_dropout": 0.1,
-    "weight_decay": 0.1,
+    "classifier_dropout": 0.0,
+    "weight_decay": 0.01,
 }
 
 
@@ -128,6 +128,8 @@ def main():
         fp16=use_fp16,
         warmup_steps=150,
         weight_decay=args.weight_decay,
+        max_grad_norm=0.5,
+        lr_scheduler_type="cosine",
         remove_unused_columns=False,
         report_to="none",
         seed=42,
@@ -135,7 +137,7 @@ def main():
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         dataloader_num_workers=4,
-        torch_compile=False, # can enable later for larger runs
+        torch_compile=False,
     )
 
     trainer = RewardTrainer(
