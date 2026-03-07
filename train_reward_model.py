@@ -11,19 +11,21 @@ import json
 
 import torch
 from datasets import Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 from trl import RewardConfig, RewardTrainer
 
 DEFAULTS = {
     "model": "Qwen/Qwen2.5-1.5B-Instruct",
     "data": "preferences.jsonl",
     "output": "./reward_model",
-    "epochs": 3,
+    "epochs": 2,
     "batch_size": 4,
-    "grad_accum": 4,
+    "grad_accum": 8,
     "lr": 1e-5,
     "max_length": 512,
-    "eval_split": 0.1,
+    "eval_split": 0.15,
+    "classifier_dropout": 0.1,
+    "weight_decay": 0.1,
 }
 
 
@@ -71,6 +73,8 @@ def main():
     parser.add_argument("--lr", type=float, default=DEFAULTS["lr"])
     parser.add_argument("--max-length", type=int, default=DEFAULTS["max_length"])
     parser.add_argument("--eval-split", type=float, default=DEFAULTS["eval_split"])
+    parser.add_argument("--classifier-dropout", type=float, default=DEFAULTS["classifier_dropout"])
+    parser.add_argument("--weight-decay", type=float, default=DEFAULTS["weight_decay"])
     args = parser.parse_args()
 
     print(f"Loading preferences from {args.data}...")
@@ -86,12 +90,26 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    config = AutoConfig.from_pretrained(args.model)
+    config.classifier_dropout = args.classifier_dropout
+    if hasattr(config, "attention_dropout"):
+        config.attention_dropout = args.classifier_dropout  # backbone regularization
+
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model,
+        config=config,
         num_labels=1,
-        dtype=dtype,
+        torch_dtype=dtype,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
+
+    # Patch score head: GenericForSequenceClassification has no dropout before the
+    # linear projection — classifier_dropout config field is silently unused.
+    if args.classifier_dropout > 0:
+        model.score = torch.nn.Sequential(
+            torch.nn.Dropout(p=args.classifier_dropout),
+            model.score,
+        )
 
     training_args = RewardConfig(
         output_dir=args.output,
@@ -109,8 +127,8 @@ def main():
         logging_steps=10,
         bf16=use_bf16,
         fp16=use_fp16,
-        warmup_steps=10,
-        weight_decay=0.01,
+        warmup_steps=50,
+        weight_decay=args.weight_decay,
         remove_unused_columns=False,
         report_to="none",
         seed=42,
