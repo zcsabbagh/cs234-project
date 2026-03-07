@@ -21,7 +21,7 @@ DEFAULTS = {
     "epochs": 2,
     "batch_size": 64,
     "grad_accum": 1,
-    "lr": 1e-4,
+    "lr": 2e-5,
     "max_length": 512,
     "eval_split": 0.15,
     "classifier_dropout": 0.1,
@@ -90,6 +90,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     config = AutoConfig.from_pretrained(args.model)
+    config.num_labels = 1  # scalar reward for Bradley-Terry
     config.classifier_dropout = args.classifier_dropout
     if hasattr(config, "attention_dropout"):
         config.attention_dropout = args.classifier_dropout  # backbone regularization
@@ -97,7 +98,6 @@ def main():
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model,
         config=config,
-        num_labels=1,
         torch_dtype=dtype,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
