@@ -75,7 +75,18 @@ def load_reward_model(path: str, max_length: int = 512):
     model.eval()
 
     def reward_fn(prompts, completions, **kwargs):
-        texts = [p + c for p, c in zip(prompts, completions)]
+        # Newer TRL passes prompts as list[list[dict]] (message dicts).
+        # Convert to formatted strings if needed.
+        texts = []
+        for p, c in zip(prompts, completions):
+            if isinstance(p, list):
+                p = tokenizer.apply_chat_template(
+                    p, tokenize=False, add_generation_prompt=True
+                )
+            if isinstance(c, list):
+                # conversation format: extract last assistant turn
+                c = c[-1]["content"] if c and isinstance(c[-1], dict) else ""
+            texts.append(p + c)
         inputs = tokenizer(
             texts, return_tensors="pt", truncation=True,
             max_length=max_length, padding=True,
@@ -187,6 +198,7 @@ def main():
     policy_tokenizer = AutoTokenizer.from_pretrained(args.policy_model)
     if policy_tokenizer.pad_token is None:
         policy_tokenizer.pad_token = policy_tokenizer.eos_token
+    policy_tokenizer.padding_side = "left"
 
     # ── 6. Initialize trainer ───────────────────────────────────────────────
 
