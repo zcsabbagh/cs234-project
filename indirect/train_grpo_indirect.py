@@ -28,7 +28,7 @@ DEFAULTS = {
     "output": "./grpo_indirect",
     "max_steps": 200,
     "num_generations": 4,
-    "max_completion_length": 256,
+    "max_completion_length": 512,
     "temperature": 0.8,
     "beta": 0.05,
     "lr": 5e-6,
