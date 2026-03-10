@@ -98,7 +98,7 @@ def main():
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model,
         config=config,
-        torch_dtype=dtype,
+        dtype=dtype,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
 

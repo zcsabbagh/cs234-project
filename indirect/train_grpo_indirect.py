@@ -70,7 +70,7 @@ def load_reward_model(path: str, max_length: int = 512):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        path, num_labels=1, torch_dtype=dtype,
+        path, num_labels=1, dtype=dtype,
     ).to(device)
     model.eval()
 
