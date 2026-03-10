@@ -37,6 +37,7 @@ DEFAULTS = {
     "lora_r": 16,
     "lora_alpha": 64,
     "eval_split": 0.1,
+    "eval_steps": 50,
 }
 
 
@@ -136,6 +137,7 @@ def main():
     parser.add_argument("--lora-r", type=int, default=DEFAULTS["lora_r"])
     parser.add_argument("--lora-alpha", type=int, default=DEFAULTS["lora_alpha"])
     parser.add_argument("--eval-split", type=float, default=DEFAULTS["eval_split"])
+    parser.add_argument("--eval-steps", type=int, default=DEFAULTS["eval_steps"])
     parser.add_argument("--skip-sanity-check", action="store_true")
     args = parser.parse_args()
 
@@ -183,9 +185,9 @@ def main():
         learning_rate=args.lr,
         warmup_steps=20,
         logging_steps=10,
-        save_steps=50,
+        save_steps=args.eval_steps,
         eval_strategy="steps",
-        eval_steps=50,
+        eval_steps=args.eval_steps,
         save_total_limit=5,
         bf16=use_bf16,
         fp16=not use_bf16 and torch.cuda.is_available(),
