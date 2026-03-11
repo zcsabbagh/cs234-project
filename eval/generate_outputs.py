@@ -139,9 +139,11 @@ def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
         for split in ["eval", "train"]:
             try:
                 if config:
-                    ds = load_dataset("tatsu-lab/alpaca_eval", config, split=split)
+                    ds = load_dataset("tatsu-lab/alpaca_eval", config, split=split,
+                                      trust_remote_code=True)
                 else:
-                    ds = load_dataset("tatsu-lab/alpaca_eval", split=split)
+                    ds = load_dataset("tatsu-lab/alpaca_eval", split=split,
+                                      trust_remote_code=True)
                 break
             except Exception as e:
                 last_exc = e
