@@ -72,11 +72,30 @@ def generate_base_api(prompts: list[str], client, workers: int = 16) -> list[str
 
 # ── Local LoRA inference ──────────────────────────────────────────────────
 
+def find_adapter_path(base_path: str) -> str:
+    """
+    Return the directory that contains adapter_config.json.
+    Checks base_path itself, then its immediate subdirectories sorted
+    by name (so checkpoint-500 < checkpoint-1000 → picks latest).
+    """
+    import glob
+    if os.path.exists(os.path.join(base_path, "adapter_config.json")):
+        return base_path
+    candidates = sorted(glob.glob(os.path.join(base_path, "*", "adapter_config.json")))
+    if candidates:
+        found = os.path.dirname(candidates[-1])  # latest checkpoint
+        print(f"  Found adapter at {found}")
+        return found
+    raise FileNotFoundError(
+        f"No adapter_config.json found in {base_path} or its subdirectories."
+    )
+
+
 def load_lora_model(adapter_path: str):
     """Load Qwen 7B + LoRA adapter. Returns (model, tokenizer)."""
+    adapter_path = find_adapter_path(adapter_path)
     print(f"  Loading base model + adapter from {adapter_path}...")
     dtype  = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
@@ -84,7 +103,7 @@ def load_lora_model(adapter_path: str):
     tokenizer.padding_side = "left"
 
     base = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL, torch_dtype=dtype, device_map="auto"
+        BASE_MODEL, dtype=dtype, device_map="auto"
     )
     model = PeftModel.from_pretrained(base, adapter_path)
     model.eval()
