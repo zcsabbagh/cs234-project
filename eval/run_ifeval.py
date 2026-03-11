@@ -42,7 +42,7 @@ _IFE_BASE = (
 def _bootstrap_ifeval():
     """Download Google Research IFEval scripts and dependencies if needed."""
     os.makedirs(_IFE_PKG, exist_ok=True)
-    for fname in ["__init__.py", "instructions.py", "instructions_registry.py"]:
+    for fname in ["__init__.py", "instructions_util.py", "instructions.py", "instructions_registry.py"]:
         dest = os.path.join(_IFE_PKG, fname)
         if not os.path.exists(dest):
             url = f"{_IFE_BASE}/{fname}"
