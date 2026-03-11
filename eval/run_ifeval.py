@@ -1,5 +1,5 @@
 """
-Score IFEval outputs using the official google-deepmind/ifeval package.
+Score IFEval outputs using Google Research's instruction_following_eval scripts.
 
 Reads *_ifeval_*.jsonl files from --output-dir and computes:
   - Prompt-level strict accuracy
@@ -13,7 +13,6 @@ Outputs:
   results/ifeval_bar.png         bar chart figure
 
 Usage:
-    pip install ifeval
     python eval/run_ifeval.py --output-dir ./eval_outputs --results-dir ./eval_results
 """
 
@@ -21,6 +20,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 
 import matplotlib
@@ -29,21 +31,62 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+# ── IFEval bootstrap ──────────────────────────────────────────────────────
+
+_IFE_PKG = "/tmp/instruction_following_eval"
+_IFE_BASE = (
+    "https://raw.githubusercontent.com/google-research/"
+    "google-research/master/instruction_following_eval"
+)
+
+def _bootstrap_ifeval():
+    """Download Google Research IFEval scripts and dependencies if needed."""
+    os.makedirs(_IFE_PKG, exist_ok=True)
+    for fname in ["__init__.py", "instructions.py", "instructions_registry.py"]:
+        dest = os.path.join(_IFE_PKG, fname)
+        if not os.path.exists(dest):
+            url = f"{_IFE_BASE}/{fname}"
+            try:
+                urllib.request.urlretrieve(url, dest)
+                print(f"  Downloaded {fname}")
+            except Exception:
+                if fname == "__init__.py":
+                    open(dest, "w").close()
+                else:
+                    raise RuntimeError(f"Could not download {url}")
+    # Install dependencies required by instructions.py
+    for dep in ["langdetect", "immutabledict"]:
+        try:
+            __import__(dep)
+        except ImportError:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-q", dep]
+            )
+    parent = os.path.dirname(_IFE_PKG)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+
+
+def _get_instruction_dict():
+    try:
+        from instruction_following_eval.instructions_registry import INSTRUCTION_DICT
+        return INSTRUCTION_DICT
+    except ImportError:
+        pass
+    _bootstrap_ifeval()
+    from instruction_following_eval.instructions_registry import INSTRUCTION_DICT
+    return INSTRUCTION_DICT
+
+
 # ── IFEval evaluation ─────────────────────────────────────────────────────
 
 def evaluate_ifeval(rows: list[dict]) -> dict:
     """
-    Evaluate IFEval responses using instruction_following_eval package.
+    Evaluate IFEval responses using instruction_following_eval scripts.
     Each row must have: prompt, instruction_id_list, kwargs, response.
     Returns dict with prompt_strict, prompt_loose, instr_strict, instr_loose.
     """
-    try:
-        from ifeval.instructions_registry import INSTRUCTION_DICT
-    except ImportError:
-        raise SystemExit(
-            "ERROR: ifeval not installed.\n"
-            "Run: pip install ifeval"
-        )
+    INSTRUCTION_DICT = _get_instruction_dict()
 
     prompt_strict_correct  = 0
     prompt_loose_correct   = 0
