@@ -1,5 +1,5 @@
 """
-Score IFEval outputs using the official instruction_following_eval package.
+Score IFEval outputs using the official google-deepmind/ifeval package.
 
 Reads *_ifeval_*.jsonl files from --output-dir and computes:
   - Prompt-level strict accuracy
@@ -13,7 +13,7 @@ Outputs:
   results/ifeval_bar.png         bar chart figure
 
 Usage:
-    pip install instruction-following-eval
+    pip install ifeval
     python eval/run_ifeval.py --output-dir ./eval_outputs --results-dir ./eval_results
 """
 
@@ -37,12 +37,11 @@ def evaluate_ifeval(rows: list[dict]) -> dict:
     Returns dict with prompt_strict, prompt_loose, instr_strict, instr_loose.
     """
     try:
-        from instruction_following_eval import evaluation_main as eval_main
-        from instruction_following_eval.instructions_registry import INSTRUCTION_DICT
+        from ifeval.instructions_registry import INSTRUCTION_DICT
     except ImportError:
         raise SystemExit(
-            "ERROR: instruction_following_eval not installed.\n"
-            "Run: pip install instruction-following-eval"
+            "ERROR: ifeval not installed.\n"
+            "Run: pip install ifeval"
         )
 
     prompt_strict_correct  = 0

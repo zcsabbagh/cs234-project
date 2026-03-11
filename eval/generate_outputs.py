@@ -133,13 +133,29 @@ def generate_local(prompts: list[str], model, tokenizer) -> list[str]:
 def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
     """Returns (instructions, gpt4_outputs)."""
     print("Loading AlpacaEval dataset...")
-    try:
-        ds = load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval_gpt4_baseline", split="eval")
-    except Exception:
-        ds = load_dataset("tatsu-lab/alpaca_eval", split="eval")
+    ds = None
+    for config in ["alpaca_eval_gpt4_baseline", "alpaca_eval", None]:
+        for split in ["eval", "train"]:
+            try:
+                if config:
+                    ds = load_dataset("tatsu-lab/alpaca_eval", config, split=split, trust_remote_code=True)
+                else:
+                    ds = load_dataset("tatsu-lab/alpaca_eval", split=split, trust_remote_code=True)
+                break
+            except Exception:
+                continue
+        if ds is not None:
+            break
+    if ds is None:
+        raise RuntimeError(
+            "Could not load AlpacaEval dataset. "
+            "Check internet access and huggingface_hub installation."
+        )
     ds = ds.select(range(min(n, len(ds))))
     instructions = [row["instruction"] for row in ds]
-    gpt4_outputs  = [row["output"] for row in ds]
+    # column may be "output" or "gpt4_output" depending on config
+    out_col = "output" if "output" in ds.column_names else "gpt4_output"
+    gpt4_outputs = [row[out_col] for row in ds]
     print(f"  Loaded {len(instructions)} AlpacaEval prompts")
     return instructions, gpt4_outputs
 
