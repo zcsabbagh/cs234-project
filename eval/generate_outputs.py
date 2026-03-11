@@ -134,6 +134,7 @@ def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
     """Returns (instructions, gpt4_outputs)."""
     print("Loading AlpacaEval dataset...")
     ds = None
+    last_exc = None
     for config in ["alpaca_eval_gpt4_baseline", "alpaca_eval", None]:
         for split in ["eval", "train"]:
             try:
@@ -142,14 +143,14 @@ def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
                 else:
                     ds = load_dataset("tatsu-lab/alpaca_eval", split=split)
                 break
-            except Exception:
+            except Exception as e:
+                last_exc = e
                 continue
         if ds is not None:
             break
     if ds is None:
         raise RuntimeError(
-            "Could not load AlpacaEval dataset. "
-            "Check internet access and huggingface_hub installation."
+            f"Could not load AlpacaEval dataset. Last error: {last_exc}"
         )
     ds = ds.select(range(min(n, len(ds))))
     instructions = [row["instruction"] for row in ds]
