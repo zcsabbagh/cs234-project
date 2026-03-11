@@ -131,17 +131,66 @@ def generate_local(prompts: list[str], model, tokenizer) -> list[str]:
 # ── Dataset loaders ───────────────────────────────────────────────────────
 
 def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
-    """Returns (instructions, gpt4_outputs)."""
+    """
+    Returns (instructions, gpt4_outputs).
+    Tries multiple loading strategies since tatsu-lab/alpaca_eval uses a
+    custom dataset script that newer `datasets` versions block.
+    """
     print("Loading AlpacaEval dataset...")
+
+    # Strategy 1: huggingface_hub direct parquet download (no script needed)
     try:
-        ds = load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval_gpt4_baseline", split="eval")
-    except Exception:
-        ds = load_dataset("tatsu-lab/alpaca_eval", split="eval")
-    ds = ds.select(range(min(n, len(ds))))
-    instructions = [row["instruction"] for row in ds]
-    gpt4_outputs  = [row["output"] for row in ds]
-    print(f"  Loaded {len(instructions)} AlpacaEval prompts")
-    return instructions, gpt4_outputs
+        import pandas as pd
+        from huggingface_hub import hf_hub_download, list_repo_tree
+        repo_files = [
+            f.path for f in list_repo_tree(
+                "tatsu-lab/alpaca_eval", repo_type="dataset", recursive=True
+            )
+            if f.path.endswith(".parquet")
+        ]
+        if repo_files:
+            local = hf_hub_download(
+                "tatsu-lab/alpaca_eval", repo_files[0], repo_type="dataset"
+            )
+            df = pd.read_parquet(local).head(n)
+            if "instruction" in df.columns and "output" in df.columns:
+                print(f"  Loaded {len(df)} prompts via parquet")
+                return df["instruction"].tolist(), df["output"].tolist()
+    except Exception as e:
+        print(f"  parquet strategy failed: {e}")
+
+    # Strategy 2: HuggingFace Datasets Server REST API (paginated)
+    try:
+        import requests
+        instructions, gpt4_outputs = [], []
+        page = 100
+        for offset in range(0, n, page):
+            resp = requests.get(
+                "https://datasets-server.huggingface.co/rows",
+                params={
+                    "dataset": "tatsu-lab/alpaca_eval",
+                    "config":  "alpaca_eval_gpt4_baseline",
+                    "split":   "eval",
+                    "offset":  offset,
+                    "limit":   min(page, n - offset),
+                },
+                timeout=30,
+            ).json()
+            rows = resp.get("rows", [])
+            if not rows:
+                break
+            instructions.extend(r["row"]["instruction"] for r in rows)
+            gpt4_outputs.extend(r["row"]["output"]      for r in rows)
+        if instructions:
+            print(f"  Loaded {len(instructions)} prompts via HF Datasets API")
+            return instructions[:n], gpt4_outputs[:n]
+    except Exception as e:
+        print(f"  HF API strategy failed: {e}")
+
+    raise RuntimeError(
+        "Could not load AlpacaEval dataset. "
+        "Check internet access and huggingface_hub installation."
+    )
 
 
 def load_ifeval(n: int) -> list[dict]:
