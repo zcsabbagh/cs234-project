@@ -131,34 +131,39 @@ def generate_local(prompts: list[str], model, tokenizer) -> list[str]:
 # ── Dataset loaders ───────────────────────────────────────────────────────
 
 def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
-    """Returns (instructions, gpt4_outputs)."""
+    """Returns (instructions, gpt4_outputs).
+    Downloads the JSON directly via huggingface_hub to avoid datasets loading-script issues.
+    """
     print("Loading AlpacaEval dataset...")
-    ds = None
-    last_exc = None
-    for config in ["alpaca_eval_gpt4_baseline", "alpaca_eval", None]:
-        for split in ["eval", "train"]:
-            try:
-                if config:
-                    ds = load_dataset("tatsu-lab/alpaca_eval", config, split=split,
-                                      trust_remote_code=True)
-                else:
-                    ds = load_dataset("tatsu-lab/alpaca_eval", split=split,
-                                      trust_remote_code=True)
-                break
-            except Exception as e:
-                last_exc = e
-                continue
-        if ds is not None:
+    from huggingface_hub import hf_hub_download
+
+    data = None
+    for filename in [
+        "alpaca_eval.json",
+        "data/alpaca_eval.json",
+        "alpaca_eval/alpaca_eval.json",
+    ]:
+        try:
+            path = hf_hub_download(
+                repo_id="tatsu-lab/alpaca_eval",
+                filename=filename,
+                repo_type="dataset",
+            )
+            with open(path) as f:
+                data = json.load(f)
             break
-    if ds is None:
+        except Exception:
+            continue
+
+    if data is None:
         raise RuntimeError(
-            f"Could not load AlpacaEval dataset. Last error: {last_exc}"
+            "Could not load AlpacaEval JSON from tatsu-lab/alpaca_eval. "
+            "Check HF_TOKEN or internet access."
         )
-    ds = ds.select(range(min(n, len(ds))))
-    instructions = [row["instruction"] for row in ds]
-    # column may be "output" or "gpt4_output" depending on config
-    out_col = "output" if "output" in ds.column_names else "gpt4_output"
-    gpt4_outputs = [row[out_col] for row in ds]
+
+    data = data[:n]
+    instructions = [row["instruction"] for row in data]
+    gpt4_outputs  = [row["output"]      for row in data]
     print(f"  Loaded {len(instructions)} AlpacaEval prompts")
     return instructions, gpt4_outputs
 
