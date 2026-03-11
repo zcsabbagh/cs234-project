@@ -196,7 +196,7 @@ def load_alpacaeval(n: int) -> tuple[list[str], list[str]]:
 def load_ifeval(n: int) -> list[dict]:
     """Returns list of IFEval rows (key, prompt, instruction_id_list, kwargs)."""
     print("Loading IFEval dataset...")
-    ds = load_dataset("google/ifeval", split="train")
+    ds = load_dataset("google/IFEval", split="train")  # capital IFEval
     ds = ds.select(range(min(n, len(ds))))
     rows = [dict(row) for row in ds]
     print(f"  Loaded {len(rows)} IFEval prompts")
