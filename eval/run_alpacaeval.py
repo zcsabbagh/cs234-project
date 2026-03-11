@@ -103,6 +103,7 @@ def evaluate_model(
     rows: list[dict],
     model_name: str,
     n_eval: int,
+    workers: int = MAX_WORKERS,
 ) -> dict:
     """
     Compare model responses vs GPT-4 reference using GPT-4o judge.
@@ -128,7 +129,7 @@ def evaluate_model(
         return i, win, verdict
 
     print(f"  Judging {len(rows)} pairs for {model_name}...")
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(judge_one, i, row): i for i, row in enumerate(rows)}
         done = 0
         wins = 0
@@ -223,7 +224,7 @@ def main():
             continue
         print(f"\nEvaluating {model_name} vs GPT-4 (Claude judge)...")
         rows   = load_jsonl(path)
-        result = evaluate_model(client, rows, model_name, args.n_eval)
+        result = evaluate_model(client, rows, model_name, args.n_eval, args.workers)
         all_results[model_name] = result
 
     if not all_results:

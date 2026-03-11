@@ -102,13 +102,13 @@ def load_lora_model(adapter_path: str):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
-    # Load to CPU first, then move to GPU — avoids device_map="auto" CPU-offload
-    # bug in PEFT's _update_offload that causes a KeyError on doubled model paths.
+    # device_map={"": 0} forces all layers onto GPU 0, no CPU offloading.
+    # This avoids PEFT's _update_offload bug (only triggered when layers are offloaded).
+    # Loading to CPU first OOMs on Colab (~12GB RAM < 14GB model).
     base = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL, torch_dtype=dtype, low_cpu_mem_usage=True
+        BASE_MODEL, dtype=dtype, device_map={"": 0}
     )
     model = PeftModel.from_pretrained(base, adapter_path, is_trainable=False)
-    model = model.to("cuda")
     model.eval()
     return model, tokenizer
 

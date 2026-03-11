@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import matplotlib
@@ -74,8 +75,9 @@ def evaluate_ifeval(rows: list[dict]) -> dict:
                 instr_obj.build_description(**kwargs)
 
                 strict = instr_obj.check_following(response)
-                # Loose: normalize whitespace/case for some checks
-                loose_resp = " ".join(response.split()).lower()
+                # Loose: strip markdown formatting so it doesn't obscure content.
+                # Do NOT lowercase — that breaks capitalization-sensitive checks.
+                loose_resp = re.sub(r"(\*\*|__|\*|_|#{1,6} |`+|>\s?)", "", response)
                 loose  = instr_obj.check_following(loose_resp)
 
                 strict_results.append(strict)
