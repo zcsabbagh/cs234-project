@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE_MODEL      = "Qwen/Qwen2.5-7B-Instruct"
 POLICY_API      = "Qwen/Qwen2.5-7B-Instruct-Turbo"
 MAX_NEW_TOKENS  = 512
-BATCH_SIZE      = 8
+BATCH_SIZE      = 16 # A100
 
 
 # ── Together API client ───────────────────────────────────────────────────
