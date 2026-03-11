@@ -216,13 +216,28 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
+
+    def done(name):
+        """Both output files for a model already exist."""
+        return (os.path.exists(f"{args.output_dir}/alpaca_{name}.jsonl") and
+                os.path.exists(f"{args.output_dir}/ifeval_{name}.jsonl"))
+
+    # Load datasets only if at least one model still needs generation
+    need_base     = not args.skip_base     and not done("base")
+    need_indirect = not args.skip_indirect and not done("indirect")
+    need_direct   = not args.skip_direct   and not done("direct")
+
+    if not any([need_base, need_indirect, need_direct]):
+        print("All output files already exist — nothing to generate.")
+        return
+
     alpaca_instructions, gpt4_outputs = load_alpacaeval(args.n_alpaca)
     ifeval_rows = load_ifeval(args.n_ifeval)
     alpaca_prompts = alpaca_instructions
     ifeval_prompts = [r["prompt"] for r in ifeval_rows]
 
     # ── Base model (API) ──────────────────────────────────────────────────
-    if not args.skip_base:
+    if need_base:
         client = make_together_client()
         print("\n[1/3] Generating base model outputs (Together API)...")
         alpaca_base = generate_base_api(alpaca_prompts, client, args.api_workers)
@@ -231,10 +246,10 @@ def main():
         save_ifeval(f"{args.output_dir}/ifeval_base.jsonl",   ifeval_rows, ifeval_base)
         del alpaca_base, ifeval_base
     else:
-        print("\n[1/3] Skipping base model (--skip-base)")
+        print("\n[1/3] Skipping base model (outputs already exist)")
 
     # ── Indirect model (local LoRA) ───────────────────────────────────────
-    if not args.skip_indirect:
+    if need_indirect:
         print("\n[2/3] Generating indirect GRPO outputs (local)...")
         model, tok = load_lora_model(args.indirect_adapter)
         alpaca_ind = generate_local(alpaca_prompts, model, tok)
@@ -245,10 +260,10 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
     else:
-        print("\n[2/3] Skipping indirect model (--skip-indirect)")
+        print("\n[2/3] Skipping indirect model (outputs already exist)")
 
     # ── Direct model (local LoRA) ─────────────────────────────────────────
-    if not args.skip_direct:
+    if need_direct:
         print("\n[3/3] Generating direct GRPO outputs (local)...")
         model, tok = load_lora_model(args.direct_adapter)
         alpaca_dir = generate_local(alpaca_prompts, model, tok)
@@ -259,7 +274,7 @@ def main():
         gc.collect()
         torch.cuda.empty_cache()
     else:
-        print("\n[3/3] Skipping direct model (--skip-direct)")
+        print("\n[3/3] Skipping direct model (outputs already exist)")
 
     print(f"\nAll outputs saved to {args.output_dir}/")
 
