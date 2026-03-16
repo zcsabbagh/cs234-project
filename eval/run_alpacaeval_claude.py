@@ -1,9 +1,9 @@
 """
-AlpacaEval: Judge trained model outputs vs GPT-4 reference using GPT-4o (held-out judge).
+AlpacaEval: Judge trained model outputs vs GPT-4 reference using Claude (held-out judge).
 
-Using GPT-4o instead of Llama 70B (the training judge) is critical for detecting
+Using Claude instead of Llama 70B (the training judge) is critical for detecting
 reward hacking — a model that exploits Llama 70B quirks will score well on Llama
-but not on GPT-4o.
+but not on an independent judge.
 
 Outputs:
   results/alpacaeval_results.json     win rates + raw verdicts
@@ -11,24 +11,25 @@ Outputs:
   results/alpacaeval_bar.png          win-rate bar chart
 
 Usage:
-    export OPENAI_API_KEY=sk-...
-    python eval/run_alpacaeval.py --output-dir ./eval_outputs --results-dir ./eval_results
+    export ANTHROPIC_API_KEY=sk-ant-...
+    python eval/run_alpacaeval_claude.py --output-dir ./eval_outputs --results-dir ./eval_results
 """
 
 import argparse
 import json
 import os
 import random
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import openai
+import anthropic
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-JUDGE_MODEL  = "gpt-4o-mini"
+JUDGE_MODEL  = "claude-sonnet-4-6"
 MAX_WORKERS  = 4
 
 JUDGE_TEMPLATE = """\
@@ -52,7 +53,7 @@ Respond with EXACTLY one letter — A or B — and nothing else."""
 # ── Judge ─────────────────────────────────────────────────────────────────
 
 def judge_pair(
-    client: openai.OpenAI,
+    client: anthropic.Anthropic,
     instruction: str,
     response_a: str,
     response_b: str,
@@ -65,12 +66,12 @@ def judge_pair(
     )
     for attempt in range(max_retries):
         try:
-            msg = client.chat.completions.create(
+            msg = client.messages.create(
                 model=JUDGE_MODEL,
                 max_tokens=10,
                 messages=[{"role": "user", "content": prompt}],
             )
-            text = msg.choices[0].message.content.strip().upper()
+            text = msg.content[0].text.strip().upper()
             if text in ("A", "B"):
                 return text
             # Accept "Winner: A" format too
@@ -80,11 +81,9 @@ def judge_pair(
             return None
         except Exception as e:
             err = str(e)
-            if "429" in err or "rate_limit" in err:
-                # Parse retry-after from error message if available, else backoff
+            if "529" in err or "overloaded" in err.lower() or "rate" in err.lower():
                 wait = 5 * (2 ** attempt)  # 5, 10, 20, 40 s
-                import re as _re
-                m = _re.search(r"try again in (\d+(?:\.\d+)?)s", err)
+                m = re.search(r"try again in (\d+(?:\.\d+)?)s", err)
                 if m:
                     wait = float(m.group(1)) + 1
                 if attempt < max_retries - 1:
@@ -112,15 +111,15 @@ def load_jsonl(path: str) -> list[dict]:
 # ── Evaluate one model ────────────────────────────────────────────────────
 
 def evaluate_model(
-    client: openai.OpenAI,
+    client: anthropic.Anthropic,
     rows: list[dict],
     model_name: str,
     n_eval: int,
     workers: int = MAX_WORKERS,
 ) -> dict:
     """
-    Compare model responses vs GPT-4 reference using GPT-4o judge.
-    Returns win rate, loss rate, tie rate, and per-prompt verdicts.
+    Compare model responses vs GPT-4 reference using Claude judge.
+    Returns win rate and per-prompt verdicts.
     """
     rows = rows[:n_eval]
     verdicts = [None] * len(rows)
@@ -198,7 +197,7 @@ def plot_alpacaeval(results: dict[str, dict], save_path: str):
                 f"{v:.1f}%", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
     ax.set_ylabel("Win Rate vs GPT-4 Turbo (%)")
-    ax.set_title("AlpacaEval Win Rate (GPT-4o Judge — held-out)")
+    ax.set_title("AlpacaEval Win Rate (Claude Judge — held-out)")
     ax.set_ylim(0, 100)
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
@@ -220,10 +219,10 @@ def main():
 
     os.makedirs(args.results_dir, exist_ok=True)
 
-    api_key = os.environ.get("OPENAI_API_KEY", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        raise SystemExit("ERROR: OPENAI_API_KEY not set")
-    client = openai.OpenAI(api_key=api_key)
+        raise SystemExit("ERROR: ANTHROPIC_API_KEY not set")
+    client = anthropic.Anthropic(api_key=api_key)
 
     model_files = {
         "indirect": f"{args.output_dir}/alpaca_indirect.jsonl",
@@ -248,7 +247,7 @@ def main():
     header = f"{'Model':<12} {'Win Rate':>10} {'95% CI':>8} {'Wins':>7} {'N':>6}"
     sep    = "-" * len(header)
     print("\n" + sep)
-    print("AlpacaEval Results (GPT-4o judge, vs GPT-4 Turbo reference)")
+    print("AlpacaEval Results (Claude judge, vs GPT-4 Turbo reference)")
     print(sep)
     print(header)
     print(sep)
@@ -272,7 +271,6 @@ def main():
         json.dump(save_data, f, indent=2)
     print(f"\nResults saved → {results_path}")
 
-    # Save full verdicts separately (large file)
     verdicts_path = f"{args.results_dir}/alpacaeval_verdicts.json"
     with open(verdicts_path, "w") as f:
         json.dump({m: r["verdicts"] for m, r in all_results.items()}, f)
@@ -280,7 +278,7 @@ def main():
 
     table_path = f"{args.results_dir}/alpacaeval_table.txt"
     with open(table_path, "w") as f:
-        f.write(sep + "\nAlpacaEval Results (GPT-4o judge, vs GPT-4 Turbo)\n" + sep + "\n")
+        f.write(sep + "\nAlpacaEval Results (Claude judge, vs GPT-4 Turbo)\n" + sep + "\n")
         f.write(header + "\n" + sep + "\n")
         for model, r in all_results.items():
             f.write(
