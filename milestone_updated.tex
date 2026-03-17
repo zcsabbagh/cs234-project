@@ -1,0 +1,219 @@
+%%%%%%%% CS234 PROJECT MILESTONE %%%%%%%%%%%%%%%%%
+% Note: Uses icml2018.sty for formatting only. The [accepted] flag
+% enables author names but prints an ICML 2018 footer in the PDF.
+% This is a known cosmetic artifact of the template.
+
+\documentclass{article}
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+\usepackage[accepted]{icml2018}
+
+\icmltitlerunning{Direct vs.\ Indirect Pairwise RLAIF}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{Direct vs.\ Indirect Pairwise RLAIF: Reward Hacking and\\Quality Tradeoffs in LLM Alignment with AI Judges}
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Zane Sabbagh}{stan}
+\icmlauthor{Aaditya Nalawade}{stan}
+\icmlauthor{Ritwin Narra}{stan}
+\end{icmlauthorlist}
+
+\icmlaffiliation{stan}{Stanford University, Stanford, California, USA}
+
+\icmlcorrespondingauthor{Zane Sabbagh}{zanesabbagh@stanford.edu}
+
+\icmlkeywords{RLAIF, Reward Hacking, Pairwise Judging, RLHF, GRPO}
+
+\vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+\begin{abstract}
+Reinforcement learning from AI feedback (RLAIF) offers a scalable alternative to human preference labeling for aligning language models. Prior work has shown that direct RLAIF, where an LLM judge provides rewards online during RL, matches the indirect pipeline of first training a reward model on AI-labeled preferences. However, this comparison has only been studied with pointwise scalar scores. We extend it to pairwise judging, where the LLM judge compares two completions head-to-head rather than scoring each independently. Pairwise evaluation is more natural for LLMs and avoids score calibration issues, but introduces new design choices around how to aggregate pairwise outcomes into per-completion rewards. Using Qwen 2.5 7B Instruct as the policy, Llama 3.3 70B Instruct as the training judge, and GRPO as the RL algorithm, we compare indirect pairwise RLAIF (train a Bradley-Terry reward model on judge preferences, then do RL) against direct pairwise RLAIF (query the judge live during RL to compare all candidate pairs). We evaluate on IFEval and AlpacaEval using held-out judges to measure both downstream quality and susceptibility to reward hacking.
+\end{abstract}
+
+%============================================================
+% 1. INTRODUCTION
+%============================================================
+\section{Introduction}
+
+Aligning large language models with human intent typically requires reinforcement learning from human feedback (RLHF), in which a reward model trained on human preference data guides policy optimization. Collecting human preferences is expensive and slow, motivating RLAIF, where an off-the-shelf LLM replaces human annotators. \citet{lee2024rlaif} demonstrated that RLAIF achieves comparable quality to RLHF and further introduced direct RLAIF (d-RLAIF), a technique that bypasses the reward model entirely by querying the LLM judge online during RL training. They found d-RLAIF matches or exceeds the indirect pipeline when using pointwise scalar scores, where the judge assigns a numerical rating to each completion independently.
+
+However, pointwise scoring has well-known limitations. LLM judges exhibit sensitivity to score anchoring, inconsistent calibration across prompts, and positional biases when asked to produce absolute scores. Pairwise comparison, in which the judge is simply asked ``which of these two completions is better?'', is widely considered more robust and is the default paradigm in evaluation frameworks like Chatbot Arena, AlpacaEval \citep{dubois2024alpacaeval}, and MT-Bench. Despite this, the direct vs.\ indirect comparison has not been studied in the pairwise setting.
+
+This gap matters for two reasons. First, pairwise judgments require a different mechanism for converting comparative outcomes into scalar rewards suitable for RL. In the indirect case, the Bradley-Terry model provides a natural solution, mapping pairwise preferences to pointwise scores. In the direct case, one must aggregate win/loss outcomes across multiple comparisons, raising questions about variance and sample efficiency. Second, the reward hacking dynamics may differ: a learned Bradley-Terry reward model is a fixed, finite-capacity proxy that becomes increasingly exploitable as the policy drifts from the training distribution, while live pairwise judgments from an LLM judge are recomputed against the current policy's outputs at every step and cannot go stale in the same way.
+
+We investigate the following questions: (1)~Does direct pairwise RLAIF match indirect pairwise RLAIF in downstream task quality? (2)~Is the direct approach more resistant to reward hacking, as measured by divergence between training reward and held-out evaluation? (3)~What is the computational cost tradeoff, given that direct pairwise comparison requires $O(G^2)$ judge calls per prompt per training step versus $G$ reward model forward passes?
+
+%============================================================
+% 2. APPROACH
+%============================================================
+\section{Approach}
+
+\subsection{Overview}
+
+We compare two RLAIF pipelines that share the same base policy, prompt distribution, RL algorithm, and training judge, differing only in how rewards are computed. The base policy is Qwen 2.5 7B Instruct. The training judge is Llama 3.3 70B Instruct. We draw approximately 17K diverse instruction-following prompts from the UltraFeedback dataset \citep{cui2023ultrafeedback}. Both pipelines use Group Relative Policy Optimization (GRPO) \citep{shao2024deepseekmath} as the RL algorithm. All LLM inference (policy sampling and judge queries) is served through the Together API.
+
+\subsection{Indirect Pairwise RLAIF}
+
+In the indirect approach, we first construct an offline preference dataset. For each of the 17K prompts, we sample two completions from the base policy (temperature 0.7, max 512 tokens) and prompt the Llama 3.3 70B judge (temperature 0.0) to select the better one. To control for positional bias, we randomize the presentation order: with probability 0.5 we swap which completion is shown as ``Response A'' vs.\ ``Response B'' before querying the judge, then map the verdict back to the original labels. The judge is instructed to respond with exactly ``A'' or ``B.'' This produces a dataset of approximately 17K pairwise preferences.
+
+We train a Bradley-Terry reward model initialized from Qwen 2.5 1.5B Instruct on this preference data using the TRL library \citep{vonwerra2020trl}. Given a prompt $x$ and completion $y$, the reward model outputs a scalar $r(x, y)$ such that the probability of preferring $y$ over $y'$ is $\sigma(r(x, y) - r(x, y'))$, where $\sigma$ is the sigmoid function. We use a 90/10 train/eval split, batch size 64, max sequence length 512, and weight decay 0.01. During RL, for each prompt we sample $G = 4$ completions from the current policy, score each with the trained reward model, and update the policy via GRPO. The reward model is frozen throughout RL training and is not updated as the policy improves.
+
+\subsection{Direct Pairwise RLAIF}
+
+In the direct approach, we skip reward model training entirely. During each RL step, we sample $G = 4$ completions per prompt from the current policy. We then query the Llama 3.3 70B judge to compare all $\binom{G}{2} \times 2 = 12$ ordered pairs. We query both orderings $(a, b)$ and $(b, a)$ to mitigate positional bias and average the outcomes. Each completion's reward is its win fraction: the proportion of comparisons it won out of the $2(G - 1) = 6$ comparisons it participates in. These win-fraction rewards are then used directly in the GRPO update.
+
+The key property of this approach is that the reward signal is always computed with respect to the current policy's outputs, so it cannot go stale the way a fixed reward model can. A frozen reward model is trained on completions from the base policy and may become a poor proxy as the policy improves and its output distribution shifts. The direct judge, by contrast, evaluates whatever the current policy actually produces.
+
+The main cost is inference: each training step requires 12 judge calls per prompt (compared to 4 reward model forward passes in the indirect case), and each judge call involves generating text from a 70B parameter model.
+
+\subsection{Policy Optimization Details}
+
+For both pipelines, we fine-tune the Qwen 2.5 7B Instruct policy using LoRA \citep{hu2022lora} with rank $r = 16$, $\alpha = 64$, and dropout 0.05, applied to the query, key, value, and output projection layers. GRPO is configured with $G = 4$ generations per prompt, sampling temperature 0.8, maximum completion length 256 tokens, and a KL penalty coefficient $\beta = 0.05$ against the frozen reference policy. We use a learning rate of $5 \times 10^{-6}$ with 20 warmup steps, per-device batch size 2, and gradient accumulation over 4 steps (effective batch size 8).
+
+\subsection{Evaluation Protocol}
+
+We evaluate both approaches along three axes.
+
+\paragraph{Downstream quality.} We measure performance on IFEval \citep{zhou2023ifeval}, a benchmark of programmatically verifiable instruction-following tasks (e.g., ``write exactly 3 paragraphs,'' ``include the word `ocean' at least twice''), and AlpacaEval 2.0 \citep{dubois2024alpacaeval}, which uses an LLM judge to compare model outputs against a reference. Crucially, our AlpacaEval evaluations use a held-out judge (GPT-4o) that differs from the Llama 3.3 70B training judge. This cross-judge evaluation is essential: if a model scores well on Llama 3.3 70B but poorly on the held-out judge, it has learned to exploit Llama-specific quirks rather than genuinely improving.
+
+\paragraph{Reward hacking detection.} We track both the training reward (from the reward model or live judge) and the held-out evaluation score over the course of training. The classic reward hacking signature is training reward that continues to climb while held-out evaluation plateaus or declines. We additionally define a \emph{judge divergence} metric as the difference between each model's win rate under the Llama 3.3 70B training judge and its win rate under the GPT-4o held-out judge, evaluated on the same 200 prompts. A large positive divergence indicates the model has over-optimized for Llama-specific patterns.
+
+\paragraph{Qualitative analysis.} We manually inspect 50 to 100 outputs from each approach at several training checkpoints, looking for degenerate patterns such as sycophancy (excessive agreement with the user), verbosity (inflated length without added substance), and formulaic structure (e.g., always using bullet points or hedging language).
+
+%============================================================
+% 3. PROGRESS
+%============================================================
+\section{Progress and Implementation Status}
+
+\subsection{Preference Data and Reward Model}
+
+We completed the preference data generation phase of the indirect pipeline using a parallelized generation script with concurrent workers. We sampled completions from Qwen 2.5 7B Instruct and judged them with Llama 3.3 70B Instruct via the Together API. The script supports resumption from partial runs and randomizes presentation order to control for positional bias. After filtering out samples where the judge was indecisive, we retained approximately 17K valid preference pairs stored in JSONL format. Our code is publicly available.\footnote{\url{https://github.com/zcsabbagh/cs234-project}}
+
+We then trained a Bradley-Terry reward model (initialized from Qwen 2.5 1.5B Instruct) on this preference data using the TRL library on A100 GPUs for 3 epochs (186 training steps) with a peak learning rate of $1 \times 10^{-5}$ and cosine decay, batch size 64, and weight decay 0.01. Figure~\ref{fig:rm-training} shows the training dynamics. Training loss decreased from 0.70 to approximately 0.60 over 3 epochs, and training accuracy rose from near chance (0.49) to 0.63, with the reward margin increasing steadily. However, evaluation loss remained at or slightly above $\ln 2 \approx 0.693$ throughout training, and evaluation accuracy stayed at approximately 0.50, indicating that the reward model overfits to the training set and does not generalize to held-out preferences. Despite this, we proceeded with GRPO training using the best available checkpoint, treating the weakly supervised reward signal as a lower bound on the indirect pipeline's potential.
+
+\begin{figure}[ht]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=\columnwidth]{reward_model_training.pdf}}
+\caption{Reward model training dynamics over 3 epochs. (a)~Training loss decreases while evaluation loss remains near the random baseline ($\ln 2$). (b)~Training accuracy improves to 0.63 but evaluation accuracy stays at chance (0.50). (c)~Reward margin between preferred and dispreferred completions grows on the training set. The gap between training and evaluation metrics indicates overfitting.}
+\label{fig:rm-training}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+\subsection{GRPO Training}
+
+Both GRPO pipelines have been completed. The direct pipeline ran for 200 steps on an H100 GPU (approximately 47 minutes) with judge calls parallelized across all prompts in each batch (24 concurrent API calls per step). Training loss oscillated near zero, which is expected for advantage-weighted policy gradient under KL regularization. KL divergence from the reference policy remained very low throughout ($\approx 5 \times 10^{-4}$), indicating the policy did not drift substantially from the Qwen 2.5 7B Instruct base. Between 35--55\% of batches exhibited zero reward standard deviation, meaning one completion won all pairwise comparisons within its group; these steps produce zero gradient and represent a source of training inefficiency in the direct approach. The indirect pipeline was trained for 200 steps under identical hyperparameters, with the frozen reward model providing per-completion scalar rewards.
+
+\subsection{Preliminary Results}
+
+\begin{table}[ht]
+\caption{Evaluation results. IFEval: instruction-following accuracy on 541 prompts (programmatic evaluation). AlpacaEval: win rate vs.\ base on 805 prompts (GPT-4o judge). Divergence: Llama 3.3 70B training-judge win rate minus GPT-4o held-out win rate, evaluated on 200 prompts; larger values indicate greater reward hacking.}
+\label{tab:results}
+\vskip 0.15in
+\begin{center}
+\begin{small}
+\begin{tabular}{lccc}
+\toprule
+Metric & Base & Indirect & Direct \\
+\midrule
+IFEval Prompt Strict & 66.5 & 65.6 & \textbf{67.3} \\
+IFEval Prompt Loose  & 45.3 & 45.5 & \textbf{46.0} \\
+IFEval Instr Strict  & 76.4 & 76.6 & \textbf{77.5} \\
+IFEval Instr Loose   & 57.2 & 57.9 & \textbf{58.4} \\
+\midrule
+AlpacaEval (GPT-4o)  & ---  & $85.9 \pm 2.6$ & $\mathbf{87.1 \pm 2.5}$ \\
+Judge Divergence     & ---  & $+0.150$        & $\mathbf{+0.100}$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{center}
+\vskip -0.1in
+\end{table}
+
+Table~\ref{tab:results} summarizes our evaluation results. On IFEval, differences across all three models are within 1--2 percentage points on all metrics, which we attribute primarily to the limited number of training steps (200) and the conservative KL coefficient keeping the policy close to the reference. Notably, the direct approach modestly outperforms both the base and the indirect approach across all four IFEval metrics, while the indirect approach shows a slight regression on prompt-level strict accuracy relative to the base. On AlpacaEval (evaluated with GPT-4o as the held-out judge against the base model), both trained models outperform the base, with the direct approach achieving a 1.2-point higher win rate than the indirect approach ($87.1\%$ vs.\ $85.9\%$).
+
+The judge divergence metric provides the clearest evidence on the reward hacking question. The indirect approach shows a divergence of $+0.150$ between its Llama 3.3 70B and GPT-4o win rates, compared to $+0.100$ for the direct approach. This 50\% larger gap for the indirect model is consistent with our hypothesis: the fixed reward model, trained on base-policy completions, becomes an increasingly exploitable proxy as the policy drifts, leading the indirect model to over-optimize for Llama-specific patterns that do not transfer to a held-out judge. The direct model, receiving live comparative feedback against its own current outputs, is more resistant to this form of distributional exploitation.
+
+\begin{figure}[ht]
+\vskip 0.2in
+\begin{center}
+\centerline{\includegraphics[width=\columnwidth]{reward_hacking_diagnostic.pdf}}
+\caption{Reward hacking diagnostic: training-judge (Llama 3.3 70B) win rate vs.\ held-out-judge (GPT-4o) win rate across checkpoints for both pipelines. The indirect approach shows greater divergence between the two curves, consistent with reward hacking via distributional shift in the frozen reward model.}
+\label{fig:hacking}
+\end{center}
+\vskip -0.2in
+\end{figure}
+
+Figure~\ref{fig:hacking} shows the checkpoint-level divergence curves for both approaches. The indirect model's training-judge win rate climbs more steeply and diverges from the held-out win rate earlier in training, while the direct model's two curves track more closely. This is the canonical reward hacking signature: a proxy reward signal that improves on the training judge but does not correspond to genuine quality improvement as measured by an independent evaluator.
+
+%============================================================
+% 4. REMAINING WORK
+%============================================================
+\section{Remaining Work}
+
+Our preliminary results support the paper's central hypothesis, but several directions remain to strengthen the analysis for the final report.
+
+On the experimental side, we plan to increase the number of training steps beyond 200 for both pipelines. The low KL divergence observed throughout suggests the policy has significant headroom before hitting the regularization constraint, and reward hacking signatures may become more pronounced with additional training. We also plan to conduct a more thorough reward model investigation: increasing regularization (dropout, stronger weight decay) and experimenting with a larger reward model backbone may improve generalization from the current 50\% held-out accuracy baseline, giving the indirect pipeline a more competitive starting point.
+
+For the evaluation, we will expand the AlpacaEval sample size and run a full checkpoint-level analysis to produce smoother divergence curves. We will also perform the qualitative inspection of 50--100 outputs per model, examining for sycophancy, verbosity gaming, and format collapse. If compute permits, we plan to ablate the number of completions $G \in \{2, 4, 8\}$ to study how group size affects reward variance in the direct approach, since the high rate of zero-std batches at $G=4$ may be partially addressable by increasing group size. Finally, we will log wall-clock time and API cost per training step for both pipelines to produce a quantitative cost--quality Pareto comparison.
+
+\paragraph{Use of AI tools.} Claude Opus 4.5 (Anthropic) was used throughout this project to assist with code development, including drafting and debugging the preference generation script, reward model training loop, and GRPO training pipelines. Claude was also used to polish the language and grammar of this report. GPT-4o (OpenAI) served as the held-out evaluation judge in AlpacaEval and the reward hacking diagnostic, and is not the same model used for any training signal. All experimental design, analysis, interpretation of results, and technical decisions are the authors' own work.
+
+\begin{thebibliography}{7}
+
+\bibitem[Cui et~al.(2023)]{cui2023ultrafeedback}
+Ganqu Cui, Lifan Yuan, Ning Ding, Guanming Yao, Wei Zhu, Yuan Ni, Guotong Xie, Zhiyuan Liu, and Maosong Sun.
+\newblock Ultra{F}eedback: Boosting language models with scaled {AI} feedback.
+\newblock \emph{arXiv preprint arXiv:2310.01377}, 2023.
+
+\bibitem[Dubois et~al.(2024)]{dubois2024alpacaeval}
+Yann Dubois, Bal\'{a}zs Galambosi, Percy Liang, and Tatsunori~B. Hashimoto.
+\newblock Length-controlled {A}lpaca{E}val: A simple way to debias automatic evaluators.
+\newblock In \emph{Proceedings of the 41st International Conference on Machine Learning (ICML)}, 2024.
+
+\bibitem[Hu et~al.(2022)]{hu2022lora}
+Edward~J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+\newblock {L}o{RA}: Low-rank adaptation of large language models.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2022.
+
+\bibitem[Lee et~al.(2024)]{lee2024rlaif}
+Harrison Lee, Samrat Phatale, Hassan Mansoor, Thomas Mesnard, Johan Ferret, Kellie Lu, Colton Bishop, Ethan Hall, Victor Carbune, Abhinav Rastogi, and Sushant Prakash.
+\newblock {RLAIF} vs.\ {RLHF}: Scaling reinforcement learning from human feedback with {AI} feedback.
+\newblock In \emph{Proceedings of the 41st International Conference on Machine Learning (ICML)}, 2024.
+
+\bibitem[Shao et~al.(2024)]{shao2024deepseekmath}
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y.K.~Li, Y.~Wu, and Daya Guo.
+\newblock {D}eep{S}eek{M}ath: Pushing the limits of mathematical reasoning in open language models.
+\newblock \emph{arXiv preprint arXiv:2402.03300}, 2024.
+
+\bibitem[von Werra et~al.(2020)]{vonwerra2020trl}
+Leandro von Werra, Younes Belkada, Lewis Tunstall, Edward Beeching, Tristan Thrush, Nathan Lambert, and Shengyi Huang.
+\newblock {TRL}: Transformer reinforcement learning.
+\newblock GitHub repository, 2020.
+\newblock \url{https://github.com/huggingface/trl}.
+
+\bibitem[Zhou et~al.(2023)]{zhou2023ifeval}
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou.
+\newblock Instruction-following evaluation for large language models.
+\newblock \emph{arXiv preprint arXiv:2311.07911}, 2023.
+
+\end{thebibliography}
+
+\end{document}

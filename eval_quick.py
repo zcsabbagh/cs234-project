@@ -9,6 +9,7 @@ Quick head-to-head eval: base Qwen 7B vs Direct GRPO-trained model.
 import json
 import os
 import random
+from pathlib import Path
 
 import openai
 import torch
@@ -16,11 +17,13 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ── Config ───────────────────────────────────────────────────────────────
-ADAPTER_PATH = "/Users/zane/Downloads/grpo_direct"
+ADAPTER_CANDIDATES = [
+    Path("./grpo_direct"),
+    Path("/Users/zane/Downloads/grpo_direct"),
+]
 BASE_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 POLICY_MODEL_API = "Qwen/Qwen2.5-7B-Instruct-Turbo"
-DATA_PATH = "preferences.jsonl"
 NUM_EVAL = 10  # number of prompts to evaluate
 MAX_NEW_TOKENS = 200
 
@@ -40,6 +43,15 @@ Response A:
 
 Response B:
 {response_b}"""
+
+
+def resolve_existing_path(candidates: list[Path], label: str) -> Path:
+    """Return the first existing path from a list of candidates."""
+    for path in candidates:
+        if path.exists():
+            return path
+    tried = ", ".join(str(path) for path in candidates)
+    raise FileNotFoundError(f"Could not find {label}. Tried: {tried}")
 
 
 def get_eval_prompts(path: str, n: int) -> list[str]:
@@ -86,14 +98,25 @@ def judge(instruction: str, response_a: str, response_b: str) -> str:
 
 
 def main():
-    prompts = get_eval_prompts(DATA_PATH, NUM_EVAL)
+    adapter_path = resolve_existing_path(ADAPTER_CANDIDATES, "LoRA adapter directory")
+    data_path = resolve_existing_path(
+        [
+            Path("preferences.jsonl"),
+            adapter_path / "preferences.jsonl",
+        ],
+        "preferences dataset",
+    )
+
+    print(f"Using adapter: {adapter_path}")
+    print(f"Using data: {data_path}")
+    prompts = get_eval_prompts(str(data_path), NUM_EVAL)
     print(f"Evaluating {len(prompts)} prompts\n")
 
     # ── Load trained model locally on MPS ────────────────────────────────
     print("Loading base model + LoRA adapter on MPS...")
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
-    tokenizer = AutoTokenizer.from_pretrained(ADAPTER_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(adapter_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
@@ -101,7 +124,7 @@ def main():
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL, torch_dtype=torch.float16, device_map=device,
     )
-    model = PeftModel.from_pretrained(base_model, ADAPTER_PATH)
+    model = PeftModel.from_pretrained(base_model, adapter_path)
     model.eval()
     print("Model loaded.\n")
 
