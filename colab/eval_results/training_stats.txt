@@ -1,0 +1,22 @@
+
+=======================================================
+Training Diagnostics Summary
+=======================================================
+
+  INDIRECT GRPO:
+    Steps trained:       10
+    Reward (initial):    2.475
+    Reward (final):      3.089
+    Reward (max):        3.492
+    Reward Δ:            +0.614
+    KL (final):          0.000689
+    Eval reward @step 100: 3.314
+
+  DIRECT GRPO:
+    Steps trained:       5
+    Reward (initial):    0.500
+    Reward (final):      0.500
+    Reward (max):        0.500
+    Reward Δ:            -0.000
+    KL (final):          0.000598
+=======================================================

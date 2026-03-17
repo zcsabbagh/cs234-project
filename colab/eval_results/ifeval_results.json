@@ -1,0 +1,26 @@
+{
+  "base": {
+    "prompt_strict": 0.6709796672828097,
+    "prompt_loose": 0.4602587800369686,
+    "instr_strict": 0.760898282694848,
+    "instr_loose": 0.5759577278731837,
+    "n_prompts": 541,
+    "n_instructions": 757
+  },
+  "indirect": {
+    "prompt_strict": 0.6765249537892791,
+    "prompt_loose": 0.4658040665434381,
+    "instr_strict": 0.7714663143989432,
+    "instr_loose": 0.5799207397622193,
+    "n_prompts": 541,
+    "n_instructions": 757
+  },
+  "direct": {
+    "prompt_strict": 0.6635859519408502,
+    "prompt_loose": 0.4602587800369686,
+    "instr_strict": 0.7582562747688243,
+    "instr_loose": 0.5746367239101717,
+    "n_prompts": 541,
+    "n_instructions": 757
+  }
+}

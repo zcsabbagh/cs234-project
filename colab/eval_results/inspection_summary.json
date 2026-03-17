@@ -1,0 +1,38 @@
+{
+  "base": {
+    "n_samples": 75,
+    "avg_words": 277.1333333333333,
+    "avg_chars": 1751.9733333333334,
+    "pattern_rates": {
+      "sycophantic": 0.25333333333333335,
+      "filler_phrases": 0.08,
+      "bullet_heavy": 0.25333333333333335,
+      "very_long": 0.08,
+      "very_short": 0.013333333333333334
+    }
+  },
+  "indirect": {
+    "n_samples": 75,
+    "avg_words": 279.3066666666667,
+    "avg_chars": 1771.2266666666667,
+    "pattern_rates": {
+      "sycophantic": 0.29333333333333333,
+      "filler_phrases": 0.06666666666666667,
+      "bullet_heavy": 0.28,
+      "very_long": 0.08,
+      "very_short": 0.0
+    }
+  },
+  "direct": {
+    "n_samples": 75,
+    "avg_words": 268.82666666666665,
+    "avg_chars": 1726.3866666666668,
+    "pattern_rates": {
+      "sycophantic": 0.28,
+      "filler_phrases": 0.08,
+      "bullet_heavy": 0.28,
+      "very_long": 0.06666666666666667,
+      "very_short": 0.0
+    }
+  }
+}
