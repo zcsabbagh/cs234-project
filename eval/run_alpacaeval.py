@@ -1,5 +1,5 @@
 """
-AlpacaEval: Judge trained model outputs vs GPT-4 reference using GPT-4o (held-out judge).
+AlpacaEval: Judge trained model outputs vs base model using GPT-4o (held-out judge).
 
 Using GPT-4o instead of Llama 70B (the training judge) is critical for detecting
 reward hacking — a model that exploits Llama 70B quirks will score well on Llama
@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import random
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -28,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-JUDGE_MODEL  = "gpt-4o-mini"
+JUDGE_MODEL  = "gpt-4o"
 MAX_WORKERS  = 4
 
 JUDGE_TEMPLATE = """\
@@ -81,10 +82,8 @@ def judge_pair(
         except Exception as e:
             err = str(e)
             if "429" in err or "rate_limit" in err:
-                # Parse retry-after from error message if available, else backoff
                 wait = 5 * (2 ** attempt)  # 5, 10, 20, 40 s
-                import re as _re
-                m = _re.search(r"try again in (\d+(?:\.\d+)?)s", err)
+                m = re.search(r"try again in (\d+(?:\.\d+)?)s", err)
                 if m:
                     wait = float(m.group(1)) + 1
                 if attempt < max_retries - 1:
@@ -109,18 +108,24 @@ def load_jsonl(path: str) -> list[dict]:
     return rows
 
 
+def load_base_responses(path: str) -> dict[str, str]:
+    """Load alpaca_base.jsonl and return {instruction: response}."""
+    return {row["instruction"]: row["response"] for row in load_jsonl(path)}
+
+
 # ── Evaluate one model ────────────────────────────────────────────────────
 
 def evaluate_model(
     client: openai.OpenAI,
     rows: list[dict],
+    base_responses: dict[str, str],
     model_name: str,
     n_eval: int,
     workers: int = MAX_WORKERS,
 ) -> dict:
     """
-    Compare model responses vs GPT-4 reference using GPT-4o judge.
-    Returns win rate, loss rate, tie rate, and per-prompt verdicts.
+    Compare model responses vs base model using GPT-4o judge.
+    Returns win rate and per-prompt verdicts.
     """
     rows = rows[:n_eval]
     verdicts = [None] * len(rows)
@@ -128,15 +133,15 @@ def evaluate_model(
     def judge_one(i, row):
         instruction = row["instruction"]
         model_resp  = row["response"]
-        gpt4_resp   = row["gpt4_output"]
+        base_resp   = base_responses.get(instruction, "")
 
         # Randomize position to control A/B bias
         swap = random.random() < 0.5
         if swap:
-            verdict = judge_pair(client, instruction, model_resp, gpt4_resp)
+            verdict = judge_pair(client, instruction, model_resp, base_resp)
             win = (verdict == "A")
         else:
-            verdict = judge_pair(client, instruction, gpt4_resp, model_resp)
+            verdict = judge_pair(client, instruction, base_resp, model_resp)
             win = (verdict == "B")
 
         return i, win, verdict
@@ -191,13 +196,13 @@ def plot_alpacaeval(results: dict[str, dict], save_path: str):
         win_rates, yerr=cis, capsize=6,
         color=colors[:len(models)], alpha=0.85, width=0.4
     )
-    ax.axhline(50, color="gray", linestyle="--", linewidth=1, label="50% (tie vs GPT-4)")
+    ax.axhline(50, color="gray", linestyle="--", linewidth=1, label="50% (tie vs base)")
     for bar, v, ci in zip(bars, win_rates, cis):
         ax.text(bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + ci + 1,
                 f"{v:.1f}%", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
-    ax.set_ylabel("Win Rate vs GPT-4 Turbo (%)")
+    ax.set_ylabel("Win Rate vs Base Model (%)")
     ax.set_title("AlpacaEval Win Rate (GPT-4o Judge — held-out)")
     ax.set_ylim(0, 100)
     ax.legend()
@@ -225,6 +230,13 @@ def main():
         raise SystemExit("ERROR: OPENAI_API_KEY not set")
     client = openai.OpenAI(api_key=api_key)
 
+    base_path = f"{args.output_dir}/alpaca_base.jsonl"
+    if not os.path.exists(base_path):
+        raise SystemExit(f"ERROR: Base model outputs not found: {base_path}\n"
+                         "Run generate_outputs.py first (or skip --skip-base).")
+    base_responses = load_base_responses(base_path)
+    print(f"Loaded {len(base_responses)} base model responses.")
+
     model_files = {
         "indirect": f"{args.output_dir}/alpaca_indirect.jsonl",
         "direct":   f"{args.output_dir}/alpaca_direct.jsonl",
@@ -235,9 +247,9 @@ def main():
         if not os.path.exists(path):
             print(f"  Skipping {model_name} — file not found: {path}")
             continue
-        print(f"\nEvaluating {model_name} vs GPT-4 (Claude judge)...")
+        print(f"\nEvaluating {model_name} vs base (GPT-4o judge)...")
         rows   = load_jsonl(path)
-        result = evaluate_model(client, rows, model_name, args.n_eval, args.workers)
+        result = evaluate_model(client, rows, base_responses, model_name, args.n_eval, args.workers)
         all_results[model_name] = result
 
     if not all_results:
@@ -248,7 +260,7 @@ def main():
     header = f"{'Model':<12} {'Win Rate':>10} {'95% CI':>8} {'Wins':>7} {'N':>6}"
     sep    = "-" * len(header)
     print("\n" + sep)
-    print("AlpacaEval Results (GPT-4o judge, vs GPT-4 Turbo reference)")
+    print("AlpacaEval Results (GPT-4o judge, vs base model)")
     print(sep)
     print(header)
     print(sep)
@@ -272,7 +284,6 @@ def main():
         json.dump(save_data, f, indent=2)
     print(f"\nResults saved → {results_path}")
 
-    # Save full verdicts separately (large file)
     verdicts_path = f"{args.results_dir}/alpacaeval_verdicts.json"
     with open(verdicts_path, "w") as f:
         json.dump({m: r["verdicts"] for m, r in all_results.items()}, f)
@@ -280,7 +291,7 @@ def main():
 
     table_path = f"{args.results_dir}/alpacaeval_table.txt"
     with open(table_path, "w") as f:
-        f.write(sep + "\nAlpacaEval Results (GPT-4o judge, vs GPT-4 Turbo)\n" + sep + "\n")
+        f.write(sep + "\nAlpacaEval Results (GPT-4o judge, vs base model)\n" + sep + "\n")
         f.write(header + "\n" + sep + "\n")
         for model, r in all_results.items():
             f.write(

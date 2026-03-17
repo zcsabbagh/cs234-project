@@ -170,9 +170,9 @@ def plot_reward_hacking(data: dict, alpacaeval_results: dict | None, save_path: 
                 )
 
         ax.axhline(50, color="gray", linestyle="--", linewidth=1, alpha=0.6,
-                   label="50% Claude win rate (= base model)")
+                   label="50% win rate (= base model)")
         ax.set_xlabel("Final Training Reward (Llama 70B / RM)", fontsize=12)
-        ax.set_ylabel("AlpacaEval Win Rate vs GPT-4 (Claude judge) %", fontsize=12)
+        ax.set_ylabel("AlpacaEval Win Rate vs Base Model (GPT-4o judge) %", fontsize=12)
         ax.set_title("Reward Hacking Diagnostic\n"
                      "Hacking signature: high training reward, low held-out eval",
                      fontsize=12)
