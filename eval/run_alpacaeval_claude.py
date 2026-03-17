@@ -20,6 +20,7 @@ import json
 import os
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -30,7 +31,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 JUDGE_MODEL  = "claude-sonnet-4-6"
-MAX_WORKERS  = 4
+MAX_WORKERS  = 1   # serialized — rate limiter controls throughput
+RPM_LIMIT    = 5   # Claude free-tier default; override with --rpm
+
+# ── Token-bucket rate limiter ─────────────────────────────────────────────
+class RateLimiter:
+    """Allows at most `rpm` calls per minute, thread-safe."""
+    def __init__(self, rpm: int):
+        self._interval = 60.0 / rpm
+        self._lock     = threading.Lock()
+        self._next_ok  = time.monotonic()
+
+    def wait(self):
+        with self._lock:
+            now  = time.monotonic()
+            wait = self._next_ok - now
+            if wait > 0:
+                time.sleep(wait)
+            self._next_ok = time.monotonic() + self._interval
+
+_rate_limiter: RateLimiter | None = None  # set in main()
 
 JUDGE_TEMPLATE = """\
 You are an impartial judge evaluating two AI assistant responses.
@@ -66,6 +86,8 @@ def judge_pair(
     )
     for attempt in range(max_retries):
         try:
+            if _rate_limiter:
+                _rate_limiter.wait()
             msg = client.messages.create(
                 model=JUDGE_MODEL,
                 max_tokens=10,
@@ -215,9 +237,14 @@ def main():
     parser.add_argument("--results-dir", default="./eval_results")
     parser.add_argument("--n-eval", type=int, default=805, help="Number of prompts to judge")
     parser.add_argument("--workers", type=int, default=MAX_WORKERS)
+    parser.add_argument("--rpm", type=int, default=RPM_LIMIT, help="Max requests per minute")
     args = parser.parse_args()
 
     os.makedirs(args.results_dir, exist_ok=True)
+
+    global _rate_limiter
+    _rate_limiter = RateLimiter(args.rpm)
+    print(f"Rate limiter: {args.rpm} RPM → {60/args.rpm:.1f}s between requests")
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
